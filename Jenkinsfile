@@ -1,6 +1,10 @@
 pipeline {
     agent any
 
+    parameters {
+        string(name: 'FUNCTION_FOLDER', defaultValue: 'fn-dias-habiles', description: 'Nombre del folder que contiene la función a desplegar')
+    }
+
     environment {
         PROJECT_ID = 'deinsoluciones-serverless'
         REGION     = 'us-east4'
@@ -28,26 +32,20 @@ pipeline {
             }
         }
 
-        stage('Deploy Cloud Run Functions') {
+        stage('Deploy Cloud Run Function: ${params.FUNCTION_FOLDER}') {
             steps {
                 script {
                     sh """
-                    echo 'Desplegando funciones Cloud Run...'
+                    echo 'Empaquetando y subiendo ${params.FUNCTION_FOLDER} a GCS...'
+                    gsutil -m cp -r ${params.FUNCTION_FOLDER} gs://${BUCKET}/services/
 
-                    for dir in fn-*; do
-                        if [ -d "\$dir" ]; then
-                            echo "Empaquetando y subiendo \$dir a GCS..."
-                            gsutil -m cp -r \$dir gs://${BUCKET}/services/
-
-                            echo "Desplegando funcion \$dir..."
-                            gcloud run deploy \$dir \
-                                --source=gs://${BUCKET}/services/\$dir \
-                                --region=${REGION} \
-                                --project=${PROJECT_ID} \
-                                --platform=managed \
-                                --allow-unauthenticated
-                        fi
-                    done
+                    echo 'Desplegando funcion ${params.FUNCTION_FOLDER}...'
+                    gcloud run deploy ${params.FUNCTION_FOLDER} \
+                        --source=gs://${BUCKET}/services/${params.FUNCTION_FOLDER} \
+                        --region=${REGION} \
+                        --project=${PROJECT_ID} \
+                        --platform=managed \
+                        --allow-unauthenticated
                     """
                 }
             }
@@ -56,10 +54,10 @@ pipeline {
 
     post {
         success {
-            echo "¡Deploy de funciones Cloud Run exitoso!"
+            echo "¡Deploy de ${params.FUNCTION_FOLDER} exitoso!"
         }
         failure {
-            echo "Falló el deploy de las funciones Cloud Run. Revisar logs!"
+            echo "Falló el deploy de ${params.FUNCTION_FOLDER}. Revisar logs!"
         }
     }
 }
