@@ -35,19 +35,22 @@ pipeline {
         stage('Deploy Cloud Run Function: ${params.FUNCTION_FOLDER}') {
             steps {
                 script {
-                    sh """
-                    echo 'Empaquetando y subiendo ${params.FUNCTION_FOLDER} a GCS...'
-                    gsutil -m cp -r ${params.FUNCTION_FOLDER} gs://${BUCKET}/services/
+                        sh """
+                        echo 'Creando carpeta services/ en GCS (si no existe)...'
+                        gsutil -m mkdir gs://${BUCKET}/services/
 
-                    echo 'Desplegando funcion ${params.FUNCTION_FOLDER}...'
-                    gcloud run deploy ${params.FUNCTION_FOLDER} \
-                        --source=gs://${BUCKET}/services/${params.FUNCTION_FOLDER} \
-                        --region=${REGION} \
-                        --project=${PROJECT_ID} \
-                        --platform=managed \
-                        --allow-unauthenticated
-                    """
-                }
+                        echo 'Empaquetando y subiendo ${params.FUNCTION_FOLDER} a GCS...'
+                        gsutil -m cp -r ${params.FUNCTION_FOLDER} gs://${BUCKET}/services/
+
+                        echo 'Desplegando funcion ${params.FUNCTION_FOLDER}...'
+                        gcloud run deploy ${params.FUNCTION_FOLDER} \
+                            --source=gs://${BUCKET}/services/${params.FUNCTION_FOLDER} \
+                            --region=${REGION} \
+                            --project=${PROJECT_ID} \
+                            --platform=managed \
+                            --allow-unauthenticated
+                        """
+                    }
             }
         }
     }
