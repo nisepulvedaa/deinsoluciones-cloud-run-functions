@@ -10,6 +10,7 @@ pipeline {
         REGION     = 'us-east4'
         BUCKET     = 'dev-deinsoluciones-run-sources'
         GIT_REPO   = 'git@github.com:nisepulvedaa/deinsoluciones-cloud-run-functions.git'
+        SERVICE_ACCOUNT_EMAIL = '77134593518-compute@developer.gserviceaccount.com'
         GOOGLE_APPLICATION_CREDENTIALS = credentials('gcp-key')
     }
 
@@ -35,22 +36,26 @@ pipeline {
         stage('Deploy Cloud Run Function: ${params.FUNCTION_FOLDER}') {
             steps {
                 script {
-                        sh """
-                        echo 'Creando carpeta services/ en GCS (si no existe)...'
-                        gsutil -m mkdir gs://${BUCKET}/services/
+                    sh """
+                    echo 'Creando carpeta services/ en GCS (si no existe)...'
+                    echo '' | gsutil cp - gs://${BUCKET}/services/.keep
 
-                        echo 'Empaquetando y subiendo ${params.FUNCTION_FOLDER} a GCS...'
-                        gsutil -m cp -r ${params.FUNCTION_FOLDER} gs://${BUCKET}/services/
+                    echo 'Empaquetando ${params.FUNCTION_FOLDER}...'
+                    zip -r ${params.FUNCTION_FOLDER}.zip ${params.FUNCTION_FOLDER}
 
-                        echo 'Desplegando funcion ${params.FUNCTION_FOLDER}...'
-                        gcloud run deploy ${params.FUNCTION_FOLDER} \
-                            --source=gs://${BUCKET}/services/${params.FUNCTION_FOLDER} \
-                            --region=${REGION} \
-                            --project=${PROJECT_ID} \
-                            --platform=managed \
-                            --allow-unauthenticated
-                        """
-                    }
+                    echo 'Subiendo paquete a GCS...'
+                    gsutil cp ${params.FUNCTION_FOLDER}.zip gs://${BUCKET}/services/${params.FUNCTION_FOLDER}.zip
+
+                    echo 'Desplegando funcion ${params.FUNCTION_FOLDER}...'
+                    gcloud run deploy ${params.FUNCTION_FOLDER} \
+                        --source=gs://${BUCKET}/services/${params.FUNCTION_FOLDER}.zip \
+                        --region=${REGION} \
+                        --project=${PROJECT_ID} \
+                        --service-account=${SERVICE_ACCOUNT_EMAIL} \
+                        --platform=managed \
+                        --allow-unauthenticated
+                    """
+                }
             }
         }
     }
