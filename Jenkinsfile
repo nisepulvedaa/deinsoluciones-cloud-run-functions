@@ -33,27 +33,23 @@ pipeline {
             }
         }
 
-        stage('Deploy Cloud Run Function: ${params.FUNCTION_FOLDER}') {
+        stage('Deploy Cloud Function: ${params.FUNCTION_FOLDER}') {
             steps {
                 script {
                     sh """
-                    echo 'Creando carpeta services/ en GCS (si no existe)...'
+                    echo 'Subiendo fuente a GCS por buenas prácticas...'
                     echo '' | gsutil cp - gs://${BUCKET}/services/.keep
+                    gsutil -m cp -r ${params.FUNCTION_FOLDER} gs://${BUCKET}/services/
 
-                    echo 'Empaquetando ${params.FUNCTION_FOLDER}...'
-                    zip -r ${params.FUNCTION_FOLDER}.zip ${params.FUNCTION_FOLDER}
-
-                    echo 'Subiendo paquete a GCS...'
-                    gsutil cp ${params.FUNCTION_FOLDER}.zip gs://${BUCKET}/services/${params.FUNCTION_FOLDER}.zip
-
-                    echo 'Desplegando funcion ${params.FUNCTION_FOLDER}...'
-                    gcloud run deploy ${params.FUNCTION_FOLDER} \
-                        --source=gs://${BUCKET}/services/${params.FUNCTION_FOLDER}.zip \
+                    echo 'Desplegando como Cloud Function con IAM Authentication...'
+                    gcloud functions deploy ${params.FUNCTION_FOLDER} \
                         --region=${REGION} \
                         --project=${PROJECT_ID} \
+                        --runtime=python310 \
+                        --trigger-http \
                         --service-account=${SERVICE_ACCOUNT_EMAIL} \
-                        --platform=managed \
-                        --allow-unauthenticated
+                        --no-allow-unauthenticated \
+                        --source=${params.FUNCTION_FOLDER}
                     """
                 }
             }
@@ -62,7 +58,7 @@ pipeline {
 
     post {
         success {
-            echo "¡Deploy de ${params.FUNCTION_FOLDER} exitoso!"
+            echo "¡Deploy de ${params.FUNCTION_FOLDER} exitoso como Cloud Function!"
         }
         failure {
             echo "Falló el deploy de ${params.FUNCTION_FOLDER}. Revisar logs!"
