@@ -12,6 +12,7 @@ pipeline {
         GIT_REPO   = 'git@github.com:nisepulvedaa/deinsoluciones-cloud-run-functions.git'
         SERVICE_ACCOUNT_EMAIL = '77134593518-compute@developer.gserviceaccount.com'
         GOOGLE_APPLICATION_CREDENTIALS = credentials('gcp-key')
+        ENTRY_POINT = 'verificar_dia_habil'  // Cambiar este valor si el entry-point es otro
     }
 
     stages {
@@ -41,12 +42,13 @@ pipeline {
                     echo '' | gsutil cp - gs://${BUCKET}/services/.keep
                     gsutil -m cp -r ${params.FUNCTION_FOLDER} gs://${BUCKET}/services/
 
-                    echo 'Desplegando como Cloud Function con IAM Authentication...'
+                    echo 'Desplegando como Cloud Function Gen2 con IAM Authentication...'
                     gcloud functions deploy ${params.FUNCTION_FOLDER} \
                         --region=${REGION} \
                         --project=${PROJECT_ID} \
                         --runtime=python310 \
                         --trigger-http \
+                        --entry-point=${ENTRY_POINT} \
                         --service-account=${SERVICE_ACCOUNT_EMAIL} \
                         --no-allow-unauthenticated \
                         --source=${params.FUNCTION_FOLDER}
@@ -58,7 +60,7 @@ pipeline {
 
     post {
         success {
-            echo "¡Deploy de ${params.FUNCTION_FOLDER} exitoso como Cloud Function!"
+            echo "¡Deploy de ${params.FUNCTION_FOLDER} exitoso como Cloud Function Gen2!"
         }
         failure {
             echo "Falló el deploy de ${params.FUNCTION_FOLDER}. Revisar logs!"
