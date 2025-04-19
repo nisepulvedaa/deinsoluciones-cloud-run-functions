@@ -1,0 +1,4 @@
+functions-framework==3.8.2
+google-cloud-storage==3.0.0
+pyarrow==16.1.0
+pandas==2.2.3
