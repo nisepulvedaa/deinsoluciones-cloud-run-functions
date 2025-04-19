@@ -3,6 +3,7 @@ pipeline {
 
     parameters {
         string(name: 'FUNCTION_FOLDER', defaultValue: 'fn-dias-habiles', description: 'Nombre del folder que contiene la función a desplegar')
+        string(name: 'ENTRY_POINT', defaultValue: 'verificar_dia_habil', description: 'Nombre de la función que será el entry point')
     }
 
     environment {
@@ -12,7 +13,6 @@ pipeline {
         GIT_REPO   = 'git@github.com:nisepulvedaa/deinsoluciones-cloud-run-functions.git'
         SERVICE_ACCOUNT_EMAIL = '77134593518-compute@developer.gserviceaccount.com'
         GOOGLE_APPLICATION_CREDENTIALS = credentials('gcp-key')
-        ENTRY_POINT = 'verificar_dia_habil'  // Cambiar este valor si el entry-point es otro
     }
 
     stages {
@@ -40,7 +40,7 @@ pipeline {
                     sh """
                     echo 'Subiendo fuente a GCS por buenas prácticas...'
                     echo '' | gsutil cp - gs://${BUCKET}/services/.keep
-                    gsutil -m cp -r ${params.FUNCTION_FOLDER} gs://${BUCKET}/services/
+                    gsutil -m cp -r ${params.FUNCTION_FOLDER}/* gs://${BUCKET}/services/
 
                     echo 'Desplegando como Cloud Function Gen2 con IAM Authentication...'
                     gcloud functions deploy ${params.FUNCTION_FOLDER} \
@@ -48,10 +48,10 @@ pipeline {
                         --project=${PROJECT_ID} \
                         --runtime=python310 \
                         --trigger-http \
-                        --entry-point=${ENTRY_POINT} \
+                        --entry-point=${params.ENTRY_POINT} \
                         --service-account=${SERVICE_ACCOUNT_EMAIL} \
                         --no-allow-unauthenticated \
-                        --source=${params.FUNCTION_FOLDER}
+                        --source=gs://${BUCKET}/services
                     """
                 }
             }
