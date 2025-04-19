@@ -9,7 +9,6 @@ pipeline {
     environment {
         PROJECT_ID = 'deinsoluciones-serverless'
         REGION     = 'us-east4'
-        BUCKET     = 'dev-deinsoluciones-run-sources'
         GIT_REPO   = 'git@github.com:nisepulvedaa/deinsoluciones-cloud-run-functions.git'
         SERVICE_ACCOUNT_EMAIL = '77134593518-compute@developer.gserviceaccount.com'
         GOOGLE_APPLICATION_CREDENTIALS = credentials('gcp-key')
@@ -38,11 +37,7 @@ pipeline {
             steps {
                 script {
                     sh """
-                    echo 'Subiendo fuente a GCS por buenas prácticas...'
-                    echo '' | gsutil cp - gs://${BUCKET}/services/.keep
-                    gsutil -m cp -r ${params.FUNCTION_FOLDER}/* gs://${BUCKET}/services/
-
-                    echo 'Desplegando como Cloud Function Gen2 con IAM Authentication...'
+                    echo 'Desplegando Cloud Function Gen2 desde código clonado...'
                     gcloud functions deploy ${params.FUNCTION_FOLDER} \
                         --region=${REGION} \
                         --project=${PROJECT_ID} \
@@ -51,7 +46,7 @@ pipeline {
                         --entry-point=${params.ENTRY_POINT} \
                         --service-account=${SERVICE_ACCOUNT_EMAIL} \
                         --no-allow-unauthenticated \
-                        --source=gs://${BUCKET}/services
+                        --source=${params.FUNCTION_FOLDER}
                     """
                 }
             }
