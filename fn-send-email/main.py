@@ -35,6 +35,6 @@ def enviar_correo(request):
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
             smtp.login(gmail_user, gmail_password)
             smtp.send_message(message)
-        return "Correo enviado correctamente", 200
+        return ("Correo enviado correctamente", 200)
     except Exception as e:
-        return f"Error al enviar correo: {str(e)}", 500
+        return (f"Error al enviar correo: {str(e)}", 500)
