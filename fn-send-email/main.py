@@ -16,7 +16,7 @@ def get_gmail_password():
 def enviar_correo(request):
     request_json = request.get_json(silent=True)
     if not request_json or "to" not in request_json:
-        return "Error: Se requiere una lista de destinatarios en el campo 'to'", 400
+        return ("Error: Se requiere una lista de destinatarios en el campo 'to'", 400)
 
     to_list = request_json["to"]
     subject = request_json.get("subject", "Correo desde Cloud Function")
