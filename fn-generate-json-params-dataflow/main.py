@@ -36,7 +36,8 @@ def generate_schema_file(request):
             return {"error": f"No se encontró configuración para '{process_name}'"}, 404
 
         # Cargar contenido del campo 'params' como JSON
-        schema_data = json.loads(rows[0]["params"])
+        schema_data = rows[0]["params"]
+
 
         # Validación de estructura mínima esperada
         if not isinstance(schema_data, list):
