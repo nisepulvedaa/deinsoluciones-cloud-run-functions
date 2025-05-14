@@ -35,7 +35,7 @@ def validate_bigquery_table(request):
         # 2. Actualización de process_detail con el total de registros
         update_query = f"""
             UPDATE `deinsoluciones-serverless.dev_config_zone.process_detail`
-            SET end_process = CURRENT_DATETIME("America/Santiago"),
+            SET end_process = CAST(CURRENT_DATETIME("America/Santiago") AS TIMESTAMP),
                 qantity_of_records = {row_count}
             WHERE process_name = '{process_name}'
               AND zone_name = '{zone_name}'
