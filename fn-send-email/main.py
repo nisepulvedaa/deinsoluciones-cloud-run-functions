@@ -31,8 +31,14 @@ def obtener_parametros_email(process_name):
     if not results:
         raise ValueError("No se encontraron parámetros para el proceso indicado.")
 
-    # Parsear el campo JSON
-    return json.loads(results[0].params)[0]
+    params_raw = results[0].params
+    if isinstance(params_raw, str):
+        params = json.loads(params_raw)[0]
+    else:
+        params = params_raw[0]
+
+    return params
+
 
 @functions_framework.http
 def enviar_correo(request):
