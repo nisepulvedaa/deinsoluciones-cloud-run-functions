@@ -32,6 +32,18 @@ def create_bigquery_table(request):
 
         bq_client = bigquery.Client()
         table_ref = bq_client.dataset(dataset_id).table(table_id)
+
+
+        # Validar si la tabla ya existe
+        try:
+            bq_client.get_table(table_ref)
+            return {
+                "message": f"La tabla '{table_id}' ya existe en el dataset '{dataset_id}'. No se creó nuevamente."
+            }, 200
+        except Exception:
+            pass  # La tabla no existe
+
+        # Crear nueva tabla
         table = bigquery.Table(table_ref, schema=schema)
 
         # Configurar partición si se especificó columna
