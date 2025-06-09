@@ -2,7 +2,7 @@ import functions_framework
 import json
 from google.cloud import bigquery, storage
 
-BUCKET_NAME = "deinsoluciones-serverless-config"
+BUCKET_NAME = "dev-deinsoluciones-ingestas"
 
 @functions_framework.http
 def create_bigquery_table(request):
