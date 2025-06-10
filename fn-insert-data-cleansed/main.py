@@ -9,10 +9,16 @@ def ejecutar_insert(request):
         request_json = request.get_json(silent=True)
         process_name = request_json.get("process_name")
         table_type = request_json.get("table_type")
+        fecha_param = request_json.get("fecha_param")
 
         if not process_name or not table_type:
             return {
                 "error": "Faltan parámetros: process_name y/o table_type"
+            }, 400
+        
+        if not fecha_param:
+            return {
+                "error": "Falta parámetro: fecha_param (formato esperado: YYYY-MM-DD)"
             }, 400
 
         # Consulta para obtener el INSERT activo
@@ -44,6 +50,9 @@ def ejecutar_insert(request):
 
         insert_sql = rows[0]["insert_statement"]
 
+        insert_sql = insert_sql.replace("${fecha_param}", fecha_param)
+
+
         # Ejecutar el INSERT
         insert_job = bq_client.query(insert_sql)
         insert_job.result()
@@ -51,14 +60,16 @@ def ejecutar_insert(request):
         return {
             "process_name": process_name,
             "table_type": table_type,
+            "fecha_param": fecha_param,
             "status": "OK",
             "message": "INSERT ejecutado correctamente"
         }, 200
 
     except Exception as e:
         return {
-            "process_name": process_name,
-            "table_type": table_type,
+            "process_name": process_name if 'process_name' in locals() else None,
+            "table_type": table_type if 'table_type' in locals() else None,
+            "fecha_param": fecha_param if 'fecha_param' in locals() else None,
             "status": "ERROR",
             "error": str(e)
         }, 500
