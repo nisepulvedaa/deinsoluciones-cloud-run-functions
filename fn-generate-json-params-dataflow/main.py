@@ -19,7 +19,7 @@ def generate_schema_file(request):
         # Consulta al catálogo de parámetros
         query = """
             SELECT params
-            FROM `dev_config_zone.process_param`
+            FROM `dev_config_zone.process_schemas`
             WHERE process_name = @process_name
         """
         job_config = bigquery.QueryJobConfig(
