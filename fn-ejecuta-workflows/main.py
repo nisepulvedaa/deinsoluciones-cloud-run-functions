@@ -1,116 +1,125 @@
 import json
 import requests
-import functions_framework
 from datetime import datetime
+import functions_framework
+from google.cloud import bigquery
 
 # Configuración
-FIRST_CLOUD_FUNCTION_URL = "https://us-east4-deinsoluciones-serverless.cloudfunctions.net/fn-dias-habiles"
 PROJECT_ID = "deinsoluciones-serverless"
 REGION = "us-east4"
+BQ_TABLE = "dev_config_zone.process_schedule"
+FN_DIAS_HABILES_URL = "https://us-east4-deinsoluciones-serverless.cloudfunctions.net/fn-dias-habiles"
 
 def get_identity_token():
-    """Obtiene un ID Token desde el servidor de metadatos de Compute Engine."""
-    metadata_url = f"http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience={FIRST_CLOUD_FUNCTION_URL}"
+    """Obtiene un ID Token para la Cloud Function de días hábiles."""
+    metadata_url = f"http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience={FN_DIAS_HABILES_URL}"
     headers = {"Metadata-Flavor": "Google"}
-    
     response = requests.get(metadata_url, headers=headers)
-
     if response.status_code == 200:
-        return response.text  # Devuelve el token de identidad
+        return response.text
     else:
-        raise Exception(f" Error obteniendo el ID Token: {response.text}")
+        raise Exception(f"Error al obtener ID Token: {response.text}")
 
 def get_access_token():
-    """Obtiene un Access Token para autenticar la ejecución del Workflow."""
+    """Obtiene un Access Token para llamar a Workflows."""
     metadata_url = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
     headers = {"Metadata-Flavor": "Google"}
-
     response = requests.get(metadata_url, headers=headers)
-
     if response.status_code == 200:
-        return response.json()["access_token"]  #  Devuelve el token de acceso
+        return response.json()["access_token"]
     else:
-        raise Exception(f" Error obteniendo el Access Token: {response.text}")
+        raise Exception(f"Error al obtener Access Token: {response.text}")
 
-def obtener_fecha_desde_frecuencia(request_json):
-    """Genera la fecha según la frecuencia recibida en el JSON de entrada."""
-    if "fecha" in request_json:  
-        return request_json["fecha"]  # Usa la fecha proporcionada sin modificarla
-    
+@functions_framework.http
+def verificar_y_ejecutar(request):
+    request_json = request.get_json(silent=True)
+    if not request_json:
+        return {"error": "Debe enviar un JSON válido"}, 400
+
+    process_name = request_json.get("process_name")
+    workflow_name = request_json.get("workflow_name")
+    json_name = request_json.get("json_name")  # raw o cleansed
+
+    if not (process_name and workflow_name and json_name):
+        return {"error": "Faltan parámetros: process_name, workflow_name o json_name"}, 400
+
+    # Fecha actual
     hoy = datetime.today()
-    
-    if request_json.get("frecuencia") == "diaria":
-        return hoy.strftime("%d-%m-%Y")  # Formato: DD-MM-YYYY
-    elif request_json.get("frecuencia") == "mensual":
-        return hoy.strftime("01-%m-%Y")  # Formato: 01-MM-YYYY
-    else:
-        raise ValueError("Frecuencia no válida. Debe ser 'diaria' o 'mensual'.")
+    fecha_ejecucion = hoy.strftime("%d-%m-%Y")
+    fecha_ejecucion_ddmmYYYY = hoy.strftime("%d-%m-%Y")
+    fecha_ejecucion_YYYYmmdd = hoy.strftime("%Y-%m-%d")
+    dia_semana = hoy.isoweekday()
+
+    # Verificar día hábil
+    habil = verificar_dia_habil(fecha_ejecucion_ddmmYYYY)
+    if not habil:
+        return {"message": f"{fecha_ejecucion_ddmmYYYY} no es día hábil. No se ejecuta el workflow."}, 200
+
+    # Obtener configuración desde BigQuery
+    bq = bigquery.Client()
+    query = f"""
+    SELECT  process_name, 
+            periodicidad, 
+            dias_semana, 
+            dias_mes, 
+            solo_dia_habil,
+            json_config_raw AS raw, 
+            json_config_cleansed AS cleansed
+    FROM `{PROJECT_ID}.{BQ_TABLE}`
+    WHERE process_name = @process_name AND active = TRUE
+    LIMIT 1
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("process_name", "STRING", process_name)
+        ]
+    )
+    rows = list(bq.query(query, job_config=job_config).result())
+
+    if not rows:
+        return {"error": f"No se encontró configuración activa para '{process_name}'"}, 404
+
+    row = rows[0]
+
+    # Validar día de la semana
+    if dia_semana not in row["dias_semana"]:
+        return {"message": f"Hoy es día {dia_semana} y no está entre los configurados para ejecutar el proceso."}, 200
+
+    # Cargar el JSON del tipo solicitado
+    config_json_str = row[json_name]
+    config_json = config_json_str[0]
+
+    # Reemplazar `${fecha_param}` por la fecha real
+    for k, v in config_json.items():
+        if isinstance(v, str) and "${fecha_param}" in v:
+            config_json[k] = v.replace("${fecha_param}", fecha_ejecucion_YYYYmmdd)
+
+    # Ejecutar el Workflow
+    return ejecutar_workflow(workflow_name, config_json)
 
 def verificar_dia_habil(fecha):
-    """Consulta `fn-dias-habiles` y devuelve la respuesta."""
     headers = {
         "Authorization": f"Bearer {get_identity_token()}",
         "Content-Type": "application/json"
     }
-    data = json.dumps({"fecha": fecha})
-
-    response = requests.post(FIRST_CLOUD_FUNCTION_URL, headers=headers, data=data)
-
-    if response.status_code == 200:
-        return response.json()  #  Retorna la respuesta de la función
-    else:
-        print(f" Error al consultar: {response.status_code} - {response.text}")
-        return None
+    payload = {"fecha": fecha}
+    response = requests.post(FN_DIAS_HABILES_URL, headers=headers, json=payload)
+    return response.status_code == 200 and response.json().get("habil") == "S"
 
 def ejecutar_workflow(workflow_name, args):
-    """Ejecuta el Workflow en GCP si el día es hábil."""
-    url = f"https://workflowexecutions.googleapis.com/v1/projects/{PROJECT_ID}/locations/{REGION}/workflows/{workflow_name}/executions"
-    
+    workflow_url = f"https://workflowexecutions.googleapis.com/v1/projects/{PROJECT_ID}/locations/{REGION}/workflows/{workflow_name}/executions"
     headers = {
         "Authorization": f"Bearer {get_access_token()}",
         "Content-Type": "application/json"
     }
-
     payload = {
         "argument": json.dumps(args)
     }
 
-    response = requests.post(url, headers=headers, json=payload)
-
+    response = requests.post(workflow_url, headers=headers, json=payload)
     if response.status_code == 200:
-        print(f" Workflow '{workflow_name}' ejecutado correctamente con args: {args}")
-        return {"message": f"Workflow '{workflow_name}' ejecutado exitosamente"}, 200
+        print(f"Workflow '{workflow_name}' ejecutado con éxito.")
+        return {"message": f"Workflow '{workflow_name}' ejecutado correctamente"}, 200
     else:
-        print(f" Error al ejecutar Workflow: {response.text}")
+        print(f"Error al ejecutar el workflow: {response.text}")
         return {"error": f"No se pudo ejecutar el Workflow '{workflow_name}'"}, 500
-
-@functions_framework.http
-def verificar_y_ejecutar(request):
-    """Función HTTP que consulta si es día hábil y ejecuta el Workflow si aplica."""
-    request_json = request.get_json(silent=True)
-    print("Request: " , request_json)
-
-    # Validar si se recibió un JSON
-    if not request_json:
-        return {"error": "Debe enviar un JSON con los parámetros requeridos."}, 400
-
-    # Obtener la fecha según la lógica definida
-    try:
-        fecha = obtener_fecha_desde_frecuencia(request_json)
-        print("Fecha Obtenida: " , fecha)
-    except ValueError as e:
-        return {"error": str(e)}, 400
-
-    # Validar si el JSON tiene workflow_name y args
-    workflow_name = request_json.get("workflow_name")
-    args = request_json.get("args", {})
-
-    if not workflow_name:
-        return {"error": "El parámetro 'workflow_name' es obligatorio."}, 400
-
-    resultado = verificar_dia_habil(fecha)
-
-    if resultado and resultado.get("habil") == "S":
-        return ejecutar_workflow(workflow_name, args)
-    else:
-        return {"message": f"El día {fecha} no es hábil. No se ejecuta el Workflow '{workflow_name}'."}, 200
