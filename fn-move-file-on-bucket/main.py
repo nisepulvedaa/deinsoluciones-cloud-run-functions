@@ -1,5 +1,6 @@
 import os
 import json
+from datetime import datetime
 import functions_framework
 from google.cloud import storage
 
@@ -19,8 +20,17 @@ def mover_archivo_gcs(request):
     path_destino = request_json["path_destino"].rstrip("/")
     nombre_archivo = request_json["nombre_archivo"]
 
+    # Obtener nombre base sin extensión y extensión
+    nombre_base, extension = os.path.splitext(nombre_archivo)
+
+    # Fecha actual
+    fecha_str = datetime.now().strftime("%Y-%m-%d")
+
+    # Generar nuevo nombre con fecha
+    nuevo_nombre = f"{nombre_base}_{fecha_str}{extension}"
+
     full_path_origen = f"{path_origen}/{nombre_archivo}"
-    full_path_destino = f"{path_destino}/{nombre_archivo}"
+    full_path_destino = f"{path_destino}/{nuevo_nombre}"
 
     try:
         client = storage.Client()
