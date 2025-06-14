@@ -1,6 +1,8 @@
 import functions_framework
 from google.cloud import bigquery
 import json
+from datetime import datetime
+import os
 
 @functions_framework.http
 def cargar_parquet_a_bigquery(request):
@@ -14,6 +16,21 @@ def cargar_parquet_a_bigquery(request):
 
         if not input_uri or not output_table:
             return {"error": "Faltan los parámetros 'input' o 'output'"}, 400
+        
+        # === Modificar input_uri para incluir fecha ===
+        # Ejemplo: gs://bucket/path/file.parquet → gs://bucket/path/file_YYYY-MM-DD.parquet
+        if input_uri.startswith("gs://"):
+            ruta_gcs = input_uri[5:]  # remove gs://
+            partes = ruta_gcs.split("/", 1)
+            if len(partes) != 2:
+                return {"error": "El formato de la ruta GCS no es válido"}, 400
+
+            bucket_name, path_completo = partes
+            dir_path, file_name = os.path.split(path_completo)
+            nombre_base, extension = os.path.splitext(file_name)
+            fecha_str = datetime.now().strftime("%Y-%m-%d")
+            nuevo_nombre = f"{nombre_base}_{fecha_str}{extension}"
+            input_uri = f"gs://{bucket_name}/{dir_path}/{nuevo_nombre}"
 
         client = bigquery.Client()
 
