@@ -3,6 +3,8 @@ import json
 import pyarrow.parquet as pq
 from google.cloud import storage
 from io import BytesIO
+from datetime import datetime
+import os
 
 def check_parquet_records(bucket_name, file_name):
     """ Verifica si un archivo Parquet en Cloud Storage tiene registros. """
@@ -45,6 +47,12 @@ def validate_parquet(request):
     if not bucket_name or not file_name:
         return json.dumps({"error": "Se requieren 'bucket_name' y 'file_name'."}), 400
     
-    result = check_parquet_records(bucket_name, file_name)
+    # === Agregar sufijo con fecha actual ===
+    nombre_base, extension = os.path.splitext(file_name)
+    fecha_str = datetime.now().strftime("%Y-%m-%d")
+    file_name_con_fecha = f"{nombre_base}_{fecha_str}{extension}"
+    
+    result = check_parquet_records(bucket_name, file_name_con_fecha)
+    result["archivo_busqueda"] = f"gs://{bucket_name}/{file_name_con_fecha}"
     return json.dumps(result), 200
 
