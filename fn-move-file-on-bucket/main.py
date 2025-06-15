@@ -42,7 +42,8 @@ def mover_archivo_gcs(request):
             parquet_data = blob_src.download_as_bytes()
             df = pd.read_parquet(BytesIO(parquet_data))
             if "periodo_dia" in df.columns:
-                fecha_str = df["periodo_dia"].iloc[0]
+                fecha_valor = df["periodo_dia"].unique()[0]
+                fecha_str = fecha_valor if isinstance(fecha_valor, str) else fecha_valor.strftime("%Y-%m-%d")
             else:
                 return ("El archivo no contiene el campo 'periodo_dia'", 400)
 
@@ -50,8 +51,8 @@ def mover_archivo_gcs(request):
             parquet_data = blob_src.download_as_bytes()
             df = pd.read_parquet(BytesIO(parquet_data))
             if "periodo_mes" in df.columns:
-                fecha_completa = df["periodo_mes"].iloc[0]
-                fecha_str = fecha_completa[:7]  # YYYY-MM
+                fecha_valor = df["periodo_mes"].unique()[0]
+                fecha_str = fecha_valor if isinstance(fecha_valor, str) else fecha_valor.strftime("%Y-%m-%d")
             else:
                 return ("El archivo no contiene el campo 'periodo_mes'", 400)
 
