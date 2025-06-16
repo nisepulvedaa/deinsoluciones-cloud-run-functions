@@ -24,8 +24,8 @@ def delete_records_by_date(request):
             SELECT table_name
             FROM `deinsoluciones-serverless.dev_config_zone.process_schemas`
             WHERE process_name = @process_name
-              AND table_type = @table_type
-              AND is_active = TRUE
+            AND table_type = @table_type
+            AND is_active = TRUE
         """
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
