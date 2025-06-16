@@ -17,14 +17,13 @@ def create_table_curated(request):
 
         client = bigquery.Client()
 
-        # Consulta parametrizada para obtener el DDL
+        # Consulta para obtener múltiples DDLs
         query = """
             SELECT ddl_statement
             FROM `deinsoluciones-serverless.dev_config_zone.process_ddl`
             WHERE process_name = @process_name
-              AND table_type = @table_type
-              AND is_active = TRUE
-            LIMIT 1
+            AND table_type = @table_type
+            AND is_active = TRUE
         """
 
         job_config = bigquery.QueryJobConfig(
@@ -35,18 +34,22 @@ def create_table_curated(request):
         )
 
         query_job = client.query(query, job_config=job_config)
-        results = list(query_job.result())
+        ddl_rows = list(query_job.result())
 
-        if not results:
-            return {"error": "No se encontró una instrucción DDL activa para los parámetros entregados"}, 404
+        if not ddl_rows:
+            return {"error": "No se encontraron DDLs activas para los parámetros entregados"}, 404
 
-        ddl_statement = results[0]["ddl_statement"]
+        resultados = []
+        for row in ddl_rows:
+            ddl = row["ddl_statement"]
+            try:
+                ddl_job = client.query(ddl)
+                ddl_job.result()
+                resultados.append({"ddl": ddl, "status": "ejecutado correctamente"})
+            except Exception as ddl_error:
+                resultados.append({"ddl": ddl, "status": f"error: {str(ddl_error)}"})
 
-        # Ejecutar el DDL
-        ddl_job = client.query(ddl_statement)
-        ddl_job.result()  # Espera a que se complete
-
-        return {"message": "DDL ejecutado exitosamente"}, 200
+        return {"message": "Proceso finalizado", "resultados": resultados}, 200
 
     except Exception as e:
         return {"error": str(e)}, 500
