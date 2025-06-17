@@ -16,23 +16,25 @@ def mover_archivo_gcs(request):
         request_json = request.get_json(silent=True)
         process_name = request_json.get("process_name")
         process_fn_name = request_json.get("process_fn_name")
+        arquetype_name = request_json.get("arquetype_name")
 
         if not process_name or not process_fn_name:
-            return {"error": "Faltan 'process_name' o 'process_fn_name'"}, 400
+            return {"error": "Faltan 'process_name' ,  'process_fn_name' O 'arquetype_name' "}, 400
 
         bq = bigquery.Client()
         query = f"""
-            SELECT params, is_multi_param
+            SELECT params
             FROM `deinsoluciones-serverless.dev_config_zone.process_params`
             WHERE process_name = @process_name
-              AND process_fn_name = @process_fn_name
-              AND estatus = TRUE
-            LIMIT 1
+            AND process_fn_name = @process_fn_name
+            AND arquetype_name = @arquetype_name
+            AND active = TRUE
         """
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
                 bigquery.ScalarQueryParameter("process_name", "STRING", process_name),
                 bigquery.ScalarQueryParameter("process_fn_name", "STRING", process_fn_name),
+                bigquery.ScalarQueryParameter("arquetype_name", "STRING", arquetype_name)
             ]
         )
 
@@ -41,8 +43,7 @@ def mover_archivo_gcs(request):
             return {"error": "No se encontraron parámetros activos para el proceso"}, 404
 
         row = results[0]
-        params = json.loads(row["params"])
-        is_multi = row["is_multi_param"]
+        params = row["params"]
 
         if not isinstance(params, list):
             params = [params]
@@ -64,7 +65,7 @@ def mover_archivo_gcs(request):
             nombre_base, extension = os.path.splitext(nombre_archivo)
 
             # Determinar la fecha según periodicidad
-            if periodicidad == "espóradica":
+            if periodicidad == "esporadica":
                 fecha_str = datetime.now().strftime("%Y-%m-%d")
             else:
                 parquet_data = blob_src.download_as_bytes()

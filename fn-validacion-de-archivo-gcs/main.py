@@ -36,9 +36,10 @@ def validate_parquet(request):
     request_json = request.get_json(silent=True)
     process_name = request_json.get("process_name")
     process_fn_name = request_json.get("process_fn_name")
+    arquetype_name = request_json.get("arquetype_name")
 
     if not process_name or not process_fn_name:
-        return json.dumps({"error": "Faltan 'process_name' o 'process_fn_name'"}), 400
+        return json.dumps({"error": "Faltan 'process_name' ,  'process_fn_name' O 'arquetype_name'"}), 400
 
     # Consultar parámetros desde BigQuery
     bq = bigquery.Client()
@@ -46,21 +47,23 @@ def validate_parquet(request):
         SELECT params
         FROM `deinsoluciones-serverless.dev_config_zone.process_params`
         WHERE process_name = @process_name
-          AND process_fn_name = @process_fn_name
-          AND active = TRUE
-        LIMIT 1
+        AND process_fn_name = @process_fn_name
+        AND arquetype_name = @arquetype_name
+        AND active = TRUE
+
     """
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
             bigquery.ScalarQueryParameter("process_name", "STRING", process_name),
-            bigquery.ScalarQueryParameter("process_fn_name", "STRING", process_fn_name)
+            bigquery.ScalarQueryParameter("process_fn_name", "STRING", process_fn_name),
+            bigquery.ScalarQueryParameter("arquetype_name", "STRING", arquetype_name)
         ]
     )
     results = list(bq.query(query, job_config=job_config).result())
     if not results:
         return json.dumps({"error": "Parámetros no encontrados para el proceso"}), 404
 
-    params = json.loads(results[0]["params"])
+    params = results[0]["params"]
     bucket_name = DEFAULT_BUCKET
 
     # Revisar últimos archivos actualizados por cada path
@@ -71,7 +74,7 @@ def validate_parquet(request):
 
     for p in params:
         path_name = p["path_name"].rstrip("/")
-        periodicidad = p.get("periodicidad", "esporadica").lower()
+        periodicidad = p.get("periodicidad", "esporádica").lower()
 
         blobs = list(storage_client.list_blobs(bucket_name, prefix=path_name + "/"))
         candidatos = [
