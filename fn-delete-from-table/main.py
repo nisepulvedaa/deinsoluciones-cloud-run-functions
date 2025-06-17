@@ -8,24 +8,82 @@ bq_client = bigquery.Client()
 def eliminar_por_fecha(request):
     try:
         request_json = request.get_json(silent=True)
+        process_name = request_json.get("process_name")
+        process_fn_name = request_json.get("process_fn_name")
 
-        table_name = request_json.get("table_name")
-        fecha_param = request_json.get("fecha_param")
-        fecha_columna = request_json.get("fecha_columna")
-        process_name = request_json.get("process_name","") #opcional
+        if not process_name or not process_fn_name:
+            return {"error": "Faltan process_name o process_fn_name"}, 400
+
+        # Buscar parámetros en process_params
+        param_query = f"""
+            SELECT params
+            FROM `deinsoluciones-serverless.dev_config_zone.process_params`
+            WHERE process_name = @process_name
+            AND process_fn_name = @process_fn_name
+            AND active = TRUE
+            LIMIT 1
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("process_name", "STRING", process_name),
+                bigquery.ScalarQueryParameter("process_fn_name", "STRING", process_fn_name)
+            ]
+        )
+        result = bq_client.query(param_query, job_config=job_config).result()
+        row = next(iter(result), None)
+        if not row:
+            return {"error": "Parámetros no encontrados"}, 404
+
+        param_list = json.loads(row["params"])
+        if not param_list or not isinstance(param_list, list):
+            return {"error": "Formato de parámetros inválido"}, 400
+
+        param = param_list[0]  # solo uno por ahora
+        table_name = param.get("table_name")
+        fecha_param = param.get("fecha_param", "").strip()
+        fecha_columna = param.get("fecha_columna", "").strip()
+        periodicidad = param.get("periodicidad", "esporadica").lower()
 
         if not table_name:
-            return {"error": "Falta parámetro: table_name"}, 400
-        
-        if fecha_param and fecha_columna:
-            # Ejecutar DELETE si hay fecha
-            delete_sql = f"""
-            DELETE FROM `{table_name}`
-            WHERE DATE({fecha_columna}) = DATE('{fecha_param}')
-            """
-            delete_job = bq_client.query(delete_sql)
-            delete_job.result()
+            return {"error": "table_name es requerido en params"}, 400
 
+        if periodicidad == "esporadica" or not fecha_param or not fecha_columna:
+            # Obtener DDL desde process_ddl
+            ddl_query = f"""
+                SELECT ddl
+                FROM `deinsoluciones-serverless.dev_config_zone.process_ddl`
+                WHERE process_name = @process_name
+                AND table_type = 'raw'
+                LIMIT 1
+            """
+            ddl_config = bigquery.QueryJobConfig(
+                query_parameters=[bigquery.ScalarQueryParameter("process_name", "STRING", process_name)]
+            )
+            ddl_result = bq_client.query(ddl_query, job_config=ddl_config).result()
+            ddl_row = next(iter(ddl_result), None)
+
+            if not ddl_row:
+                return {"error": f"No se encontró DDL para process_name='{process_name}'"}, 404
+
+            ddl_original = ddl_row["ddl"]
+            ddl_reemplazado = ddl_original.replace("CREATE TABLE IF NOT EXISTS", "CREATE OR REPLACE TABLE")
+            ddl_reemplazado = ddl_reemplazado.replace("CREATE TABLE", "CREATE OR REPLACE TABLE")
+
+            bq_client.query(ddl_reemplazado).result()
+            return {
+                "table_name": table_name,
+                "process_name": process_name,
+                "status": "OK",
+                "message": "Tabla creada/reemplazada correctamente desde DDL"
+            }, 200
+
+        else:
+            # Ejecutar DELETE
+            delete_sql = f"""
+                DELETE FROM `{table_name}`
+                WHERE DATE({fecha_columna}) = DATE('{fecha_param}')
+            """
+            bq_client.query(delete_sql).result()
             return {
                 "table_name": table_name,
                 "fecha_columna": fecha_columna,
@@ -34,47 +92,8 @@ def eliminar_por_fecha(request):
                 "message": "Registros eliminados correctamente"
             }, 200
 
-        # Si no hay fecha_param ni fecha_columna, hacer CREATE OR REPLACE
-        if not process_name:
-            return {"error": "process_name es requerido para crear la tabla"}, 400
-        
-        # Buscar schema desde la tabla de configuración
-        schema_query = f"""
-        SELECT params
-        FROM `dev_config_zone.process_schemas`
-        WHERE process_name = '{process_name}'
-        LIMIT 1
-        """
-        schema_result = bq_client.query(schema_query).result()
-        row = next(iter(schema_result), None)
-
-        if not row:
-            return {"error": f"No se encontró schema para process_name='{process_name}'"}, 404
-        
-        schema_json = row["params"]
-
-        schema_fields = json.loads(schema_json)
-        bq_schema = [
-            bigquery.SchemaField(f["name"], f["type"], mode=f["mode"])
-            for f in schema_fields
-        ]
-
-        # Crear tabla vacía con ese schema
-        table = bigquery.Table(table_name, schema=bq_schema)
-        bq_client.create_table(table, exists_ok=True)
-
-        return {
-            "table_name": table_name,
-            "process_name": process_name,
-            "status": "OK",
-            "message": "Tabla <reemplazada correctamente usando el schema configurado"
-        }, 200
-
     except Exception as e:
         return {
-            "table_name": table_name if 'table_name' in locals() else None,
-            "fecha_columna": fecha_columna if 'fecha_columna' in locals() else None,
-            "fecha_param": fecha_param if 'fecha_param' in locals() else None,
             "status": "ERROR",
             "error": str(e)
         }, 500
