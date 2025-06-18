@@ -1,0 +1,4 @@
+functions-framework==3.8.2
+paramiko==3.5.1
+google-cloud-storage==3.0.0
+google-cloud-secret-manager==2.24.0
