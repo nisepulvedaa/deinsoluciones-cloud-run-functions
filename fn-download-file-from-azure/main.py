@@ -35,7 +35,7 @@ def upload_to_gcs(local_path, gcs_path):
     blob.upload_from_filename(local_path)
 
 @functions_framework.http
-def main(request):
+def download_from_azure(request):
     request_json = request.get_json(silent=True)
     if not request_json:
         return {"error": "Falta body JSON con parámetros"}, 400
