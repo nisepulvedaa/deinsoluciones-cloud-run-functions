@@ -1,90 +1,130 @@
 import functions_framework
-import paramiko
-from google.cloud import storage, secretmanager, bigquery
-import tempfile
-import os
+import requests
 import json
+import pandas as pd
+from google.cloud import storage, bigquery
+from datetime import datetime
+import os
+
+BUCKET_NAME = "dev-deinsoluciones-ingestas"
+
+def parse_vars(vars_str):
+    serie_fields = []
+    flat_fields = []
+    for item in vars_str.split(";"):
+        if item.startswith("serie."):
+            serie_fields.append(item.replace("serie.", ""))
+        else:
+            flat_fields.append(item)
+    return flat_fields, serie_fields
 
 @functions_framework.http
-def multi_sftp_to_gcs(request):
-    request_json = request.get_json(silent=True)
-
-    process_name = request_json.get("process_name")
-    process_fn_name = request_json.get("process_fn_name")
-    arquetype_name = request_json.get("arquetype_name")
-
-    if not all([process_name, process_fn_name, arquetype_name]):
-        return {"error": "Faltan parámetros de consulta"}, 400
-
+def fetch_and_store_mindicador(request):
     try:
-        # BigQuery query
+        request_json = request.get_json(silent=True)
+        process_name = request_json.get("process_name")
+        process_fn_name = request_json.get("process_fn_name", "fn-request-to-api")
+        arquetype_name = request_json.get("arquetype_name", "workflow-arquetipo-request-to-api")
+
+        if not process_name:
+            return {"error": "Falta 'process_name' en el request"}, 400
+
         bq_client = bigquery.Client()
+
         query = """
             SELECT params
             FROM `deinsoluciones-serverless.dev_config_zone.process_params`
             WHERE process_name = @process_name
-            AND process_fn_name = @process_fn_name
-            AND arquetype_name = @arquetype_name
-            AND active = TRUE
+              AND process_fn_name = @process_fn_name
+              AND arquetype_name = @arquetype_name
+              AND active = TRUE
         """
-
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
                 bigquery.ScalarQueryParameter("process_name", "STRING", process_name),
                 bigquery.ScalarQueryParameter("process_fn_name", "STRING", process_fn_name),
-                bigquery.ScalarQueryParameter("arquetype_name", "STRING", arquetype_name),
+                bigquery.ScalarQueryParameter("arquetype_name", "STRING", arquetype_name)
             ]
         )
 
-        results = bq_client.query(query, job_config=job_config).result()
-        count = 0
-        for row in results:
-            config = json.loads(row["params"])
-            hostname = config.get("hostname")
-            port = int(config.get("port", 22))
-            username = config.get("username")
-            private_key_secret = config.get("private_key_secret")
-            remote_path = config.get("remote_path")
-            bucket_name = config.get("bucket_name")
-            destination_blob_name = config.get("destination_blob_name")
+        result = bq_client.query(query, job_config=job_config).result()
+        row = next(iter(result), None)
 
-            if not all([hostname, port, username, private_key_secret, remote_path, bucket_name, destination_blob_name]):
-                continue  # O puedes loguear con print()
+        if not row:
+            return {"error": "No se encontraron parámetros activos para ese proceso"}, 404
 
-            # Obtener clave privada
-            sm_client = secretmanager.SecretManagerServiceClient()
-            secret_name = f"projects/deinsoluciones-devops-ci-core/secrets/{private_key_secret}/versions/latest"
-            response = sm_client.access_secret_version(request={"name": secret_name})
-            private_key_data = response.payload.data.decode("UTF-8")
+        param_list = row["params"]
+        if not isinstance(param_list, list):
+            return {"error": "El campo 'params' debe ser una lista"}, 400
 
-            with tempfile.NamedTemporaryFile(delete=False, mode="w") as key_file:
-                key_file.write(private_key_data)
-                key_file_path = key_file.name
+        storage_client = storage.Client()
+        resultados = []
 
-            # Conexión SFTP
-            key = paramiko.RSAKey.from_private_key_file(key_file_path)
-            ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            ssh.connect(hostname, port=port, username=username, pkey=key)
+        for param in param_list:
+            url = param.get("url")
+            filename = param.get("filename")
+            vars_str = param.get("vars")
 
-            sftp = ssh.open_sftp()
-            temp_local_path = tempfile.NamedTemporaryFile(delete=False).name
-            sftp.get(remote_path, temp_local_path)
-            sftp.close()
-            ssh.close()
+            if not url or not filename or not vars_str:
+                resultados.append({
+                    "filename": filename or "desconocido",
+                    "status": "SKIPPED",
+                    "error": "Faltan uno o más campos requeridos: url, filename o vars"
+                })
+                continue
 
-            # Subir a GCS
-            storage_client = storage.Client()
-            bucket = storage_client.bucket(bucket_name)
-            blob = bucket.blob(destination_blob_name)
-            blob.upload_from_filename(temp_local_path)
+            flat_fields, serie_fields = parse_vars(vars_str)
+            response = requests.get(url)
+            if response.status_code != 200:
+                resultados.append({
+                    "filename": filename,
+                    "status": "ERROR",
+                    "error": f"Error en la API: {response.status_code}"
+                })
+                continue
 
-            # Limpieza
-            os.remove(key_file_path)
-            os.remove(temp_local_path)
-            count += 1
+            data = response.json()
 
-        return {"message": f"Se procesaron {count} archivo(s) correctamente."}, 200
+            flat_data = {}
+            for field in flat_fields:
+                if field not in data:
+                    resultados.append({"filename": filename, "status": "ERROR", "error": f"Campo plano '{field}' no encontrado"})
+                    break
+                flat_data[field] = data[field]
+            else:
+                if serie_fields:
+                    if "serie" not in data or not data["serie"]:
+                        resultados.append({"filename": filename, "status": "ERROR", "error": "La sección 'serie' no está presente o está vacía"})
+                        continue
+                    df = pd.DataFrame(data["serie"])
+                    if not all(f in df.columns for f in serie_fields):
+                        resultados.append({"filename": filename, "status": "ERROR", "error": "Algunos campos de 'serie' no existen"})
+                        continue
+                    df = df[serie_fields]
+                    if "fecha" in df.columns:
+                        df["fecha"] = pd.to_datetime(df["fecha"]).dt.date
+                    for k, v in flat_data.items():
+                        df[k] = v
+                else:
+                    df = pd.DataFrame([flat_data])
+
+                filename_ext = filename if filename.endswith(".parquet") else f"{filename}.parquet"
+                local_path = f"/tmp/{filename_ext}"
+                destination_path = f"origin-files/{filename_ext}"
+
+                df.to_parquet(local_path, engine="pyarrow")
+                bucket = storage_client.bucket(BUCKET_NAME)
+                blob = bucket.blob(destination_path)
+                blob.upload_from_filename(local_path, content_type="application/octet-stream")
+                os.remove(local_path)
+
+                resultados.append({
+                    "filename": filename,
+                    "status": "OK",
+                    "path": f"gs://{BUCKET_NAME}/{destination_path}"
+                })
+
+        return {"resultados": resultados}, 200
 
     except Exception as e:
-        return {"error": str(e)}, 500
+        return {"error": f"Error inesperado: {str(e)}"}, 500
