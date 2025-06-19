@@ -17,7 +17,6 @@ def multi_sftp_to_gcs(request):
         return {"error": "Faltan parámetros de consulta"}, 400
 
     try:
-        # BigQuery query
         bq_client = bigquery.Client()
         query = """
             SELECT params
@@ -38,18 +37,18 @@ def multi_sftp_to_gcs(request):
 
         results = bq_client.query(query, job_config=job_config).result()
         count = 0
+
         for row in results:
-            config = json.loads(row["params"])
+            config = row["params"]
             hostname = config.get("hostname")
             port = int(config.get("port", 22))
             username = config.get("username")
             private_key_secret = config.get("private_key_secret")
-            remote_path = config.get("remote_path")
             bucket_name = config.get("bucket_name")
-            destination_blob_name = config.get("destination_blob_name")
+            destination_blob_prefix = config.get("destination_blob_name")  # puede ser 'origin-files' o ''
 
-            if not all([hostname, port, username, private_key_secret, remote_path, bucket_name, destination_blob_name]):
-                continue  # O puedes loguear con print()
+            if not all([hostname, port, username, private_key_secret, bucket_name, destination_blob_prefix]):
+                continue
 
             # Obtener clave privada
             sm_client = secretmanager.SecretManagerServiceClient()
@@ -68,15 +67,25 @@ def multi_sftp_to_gcs(request):
             ssh.connect(hostname, port=port, username=username, pkey=key)
 
             sftp = ssh.open_sftp()
+
+            # Buscar el archivo más reciente
+            files = sftp.listdir_attr()
+            if not files:
+                continue
+            latest_file = max(files, key=lambda f: f.st_mtime)
+            remote_path = latest_file.filename
+
+            # Descargar archivo
             temp_local_path = tempfile.NamedTemporaryFile(delete=False).name
             sftp.get(remote_path, temp_local_path)
             sftp.close()
             ssh.close()
 
-            # Subir a GCS
+            # Subir a GCS con el mismo nombre
             storage_client = storage.Client()
             bucket = storage_client.bucket(bucket_name)
-            blob = bucket.blob(destination_blob_name)
+            full_blob_path = os.path.join(destination_blob_prefix, remote_path)
+            blob = bucket.blob(full_blob_path)
             blob.upload_from_filename(temp_local_path)
 
             # Limpieza
