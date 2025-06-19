@@ -37,63 +37,96 @@ def multi_sftp_to_gcs(request):
 
         results = bq_client.query(query, job_config=job_config).result()
         count = 0
+        archivos_subidos = []
 
         for row in results:
-            config = row["params"]
-            hostname = config.get("hostname")
-            port = int(config.get("port", 22))
-            username = config.get("username")
-            private_key_secret = config.get("private_key_secret")
-            bucket_name = config.get("bucket_name")
-            destination_blob_prefix = config.get("destination_blob_name")  # puede ser 'origin-files' o ''
+            params_raw = row["params"]
+            print("params_raw:", params_raw)
 
-            if not all([hostname, port, username, private_key_secret, bucket_name, destination_blob_prefix]):
+            try:
+                config_list = json.loads(params_raw)
+                if not isinstance(config_list, list):
+                    config_list = [config_list]
+            except Exception as json_error:
+                print("Error al parsear JSON:", str(json_error))
                 continue
 
-            # Obtener clave privada
-            sm_client = secretmanager.SecretManagerServiceClient()
-            secret_name = f"projects/deinsoluciones-devops-ci-core/secrets/{private_key_secret}/versions/latest"
-            response = sm_client.access_secret_version(request={"name": secret_name})
-            private_key_data = response.payload.data.decode("UTF-8")
+            for config in config_list:
+                print("Configuración recibida:", config)
 
-            with tempfile.NamedTemporaryFile(delete=False, mode="w") as key_file:
-                key_file.write(private_key_data)
-                key_file_path = key_file.name
+                hostname = config.get("hostname")
+                port = int(config.get("port", 22))
+                username = config.get("username")
+                private_key_secret = config.get("private_key_secret")
+                bucket_name = config.get("bucket_name")
+                destination_blob_prefix = config.get("destination_blob_name")  # carpeta en GCS
 
-            # Conexión SFTP
-            key = paramiko.RSAKey.from_private_key_file(key_file_path)
-            ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            ssh.connect(hostname, port=port, username=username, pkey=key)
+                # Log de campos
+                print("hostname:", hostname)
+                print("port:", port)
+                print("username:", username)
+                print("private_key_secret:", private_key_secret)
+                print("bucket_name:", bucket_name)
+                print("destination_blob_prefix:", destination_blob_prefix)
 
-            sftp = ssh.open_sftp()
+                campos_requeridos = [hostname, port, username, private_key_secret, bucket_name, destination_blob_prefix]
+                if any(c is None for c in campos_requeridos):
+                    print("❌ Configuración inválida. Faltan campos. Se omite esta entrada.")
+                    continue
 
-            # Buscar el archivo más reciente
-            files = sftp.listdir_attr()
-            if not files:
-                continue
-            latest_file = max(files, key=lambda f: f.st_mtime)
-            remote_path = latest_file.filename
+                # Obtener clave privada
+                sm_client = secretmanager.SecretManagerServiceClient()
+                secret_name = f"projects/deinsoluciones-devops-ci-core/secrets/{private_key_secret}/versions/latest"
+                response = sm_client.access_secret_version(request={"name": secret_name})
+                private_key_data = response.payload.data.decode("UTF-8")
 
-            # Descargar archivo
-            temp_local_path = tempfile.NamedTemporaryFile(delete=False).name
-            sftp.get(remote_path, temp_local_path)
-            sftp.close()
-            ssh.close()
+                with tempfile.NamedTemporaryFile(delete=False, mode="w") as key_file:
+                    key_file.write(private_key_data)
+                    key_file_path = key_file.name
 
-            # Subir a GCS con el mismo nombre
-            storage_client = storage.Client()
-            bucket = storage_client.bucket(bucket_name)
-            full_blob_path = os.path.join(destination_blob_prefix, remote_path)
-            blob = bucket.blob(full_blob_path)
-            blob.upload_from_filename(temp_local_path)
+                # Conexión SFTP
+                key = paramiko.RSAKey.from_private_key_file(key_file_path)
+                ssh = paramiko.SSHClient()
+                ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                print(f"Conectando a {hostname}:{port} como {username}")
+                ssh.connect(hostname, port=port, username=username, pkey=key)
 
-            # Limpieza
-            os.remove(key_file_path)
-            os.remove(temp_local_path)
-            count += 1
+                sftp = ssh.open_sftp()
+                files = sftp.listdir_attr()
+                print("Archivos encontrados en SFTP:", [f.filename for f in files])
 
-        return {"message": f"Se procesaron {count} archivo(s) correctamente."}, 200
+                if not files:
+                    print("⚠️ No se encontraron archivos en el servidor SFTP.")
+                    continue
+
+                # Obtener el archivo más reciente
+                latest_file = max(files, key=lambda f: f.st_mtime)
+                remote_path = latest_file.filename
+
+                temp_local_path = tempfile.NamedTemporaryFile(delete=False).name
+                sftp.get(remote_path, temp_local_path)
+                sftp.close()
+                ssh.close()
+
+                # Subir a GCS
+                storage_client = storage.Client()
+                bucket = storage_client.bucket(bucket_name)
+                full_blob_path = os.path.join(destination_blob_prefix, remote_path)
+                blob = bucket.blob(full_blob_path)
+                blob.upload_from_filename(temp_local_path)
+
+                # Limpieza
+                os.remove(key_file_path)
+                os.remove(temp_local_path)
+                archivos_subidos.append(full_blob_path)
+                count += 1
+                print(f"✅ Archivo subido a gs://{bucket_name}/{full_blob_path}")
+
+        return {
+            "message": f"Se procesaron {count} archivo(s) correctamente.",
+            "archivos": archivos_subidos
+        }, 200
 
     except Exception as e:
+        print("❌ Error general:", str(e))
         return {"error": str(e)}, 500
