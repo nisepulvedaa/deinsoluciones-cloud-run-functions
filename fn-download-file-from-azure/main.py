@@ -40,9 +40,9 @@ def get_params_from_bigquery(process_name, process_fn_name, arquetype_name):
         SELECT params
         FROM `dev_config_zone.process_params`
         WHERE process_name = @process_name
-        AND process_fn_name = @process_fn_name
-        AND arquetype_name = @arquetype_name
-        AND active = TRUE
+          AND process_fn_name = @process_fn_name
+          AND arquetype_name = @arquetype_name
+          AND active = TRUE
     """
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
