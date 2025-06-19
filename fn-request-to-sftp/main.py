@@ -44,9 +44,7 @@ def multi_sftp_to_gcs(request):
             print("params_raw:", params_raw)
 
             try:
-                config_list = json.loads(params_raw)
-                if not isinstance(config_list, list):
-                    config_list = [config_list]
+                config_list = params_raw
             except Exception as json_error:
                 print("Error al parsear JSON:", str(json_error))
                 continue
