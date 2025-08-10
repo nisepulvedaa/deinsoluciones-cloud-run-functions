@@ -11,7 +11,7 @@ import functions_framework
 
 # ========= Config =========
 # Si se usa GitHub para leer config.py:
-GITHUB_TOKEN_SECRET = os.getenv("GITHUB_TOKEN_SECRET", "github-token")
+GITHUB_TOKEN_SECRET = os.getenv("GITHUB_TOKEN_SECRET", "github-auth")
 GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")
 GITHUB_ACCEPT = "application/vnd.github+json"
 
